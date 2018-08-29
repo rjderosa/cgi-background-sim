@@ -181,23 +181,32 @@ def main():
     charis = ascii.read('CHARIS_IFS_H_contrast.txt')
     charis_con = interp.interp1d(charis['arcsec'].data/3600.0, -2.5*np.log10(charis['5sigHcontr'].data), kind='linear', bounds_error=False, fill_value=1.0)
     inst_con.append(charis_con)
-    inst_filter.append('2MASS_H')
+    inst_filter.append('MKO_H')
     inst_name.append('CHARIS_IFS')
+
+    ## CHARIS wide-field (goes out to ~2.5" radius, but Y-band)
+    ## Approximate this by extending IFS out to 3"
+    charis_con = interp.interp1d(np.append(charis['arcsec'].data, 2.5)/3600.0,  -2.5*np.log10(np.append(charis['5sigHcontr'].data, charis['5sigHcontr'].data[-1])), kind='linear', bounds_error=False, fill_value=1.0)
+    inst_con.append(charis_con)
+    inst_filter.append('UKIDSS_Y')
+    inst_name.append('CHARIS_Wide')
 
     ## NIRC2 (PALMS)
     nirc2 = ascii.read('NIRC2_PALMS.txt')
     nirc2_con = interp.interp1d(nirc2['arcsec'].data/3600.0, nirc2['dmag'].data, kind='linear', bounds_error=False, fill_value=1.0)
     inst_con.append(nirc2_con)
-    inst_filter.append('2MASS_H')
+    inst_filter.append('MKO_H')
     inst_name.append('NIRC2_PALMS')
+
+    ## GPI bright star contrast (V~5)??
 
 
     n_inst = len(inst_name)
 
 
     ## Define filters and compute extinction from Cardelli et al. 1989
-    filters = ['STIS_50CCD', 'CGI_narrow', 'CGI_wide', 'CGI_IFS660', 'CGI_IFS730', 'CGI_IFS760', '2MASS_H']
-    y = (1.0/np.array([0.556, 0.574, 0.819, 0.654, 0.721, 0.749, 1.64])) - 1.82
+    filters = ['STIS_50CCD', 'CGI_narrow', 'CGI_wide', 'CGI_IFS660', 'CGI_IFS730', 'CGI_IFS760', '2MASS_H', 'UKIDSS_Y', 'MKO_J', 'MKO_H', 'MKO_Ks']
+    y = (1.0/np.array([0.556, 0.574, 0.819, 0.654, 0.721, 0.749, 1.64, 1.03, 1.24, 1.62, 2.13])) - 1.82
     a = 1.0 + 0.17699*y - 0.50447*y**2 - 0.02427*y**3 + 0.72085*y**4 + 0.01979*y**5 - 0.77530*y**6 + 0.32999*y**7
     b = 1.41338*y + 2.28305*y**2 + 1.07233*y**3 - 5.38434*y**4 - 0.62251*y**5 + 5.30260*y**6 - 2.09002*y**7
     al_av = a + (b/3.1)
@@ -261,7 +270,7 @@ def main():
         sim_type = 'Besancon'
 
         ## Only do non-duplicate entries on the list
-        if (dupl == 0) and (name == 'HD 150706'):
+        if (dupl == 0):
 
             ## For each star, run n_sim simulations with both besancon and trilegal
             n_sim = 20000
@@ -271,6 +280,7 @@ def main():
                 mass, vmag, synth_mag = read_besancon(besancon_name, synth_interp, synth_interp_lowtemp, zp, vm, al_av)
                 size = size_b
             elif sim_type == 'TRILEGAL':
+                # TODO: Load Av vs distance from besancon.
                 trilegal_name = 'TRILEGAL/'+str(trilegal)+'.dat.gz'
                 mass, vmag, synth_mag = read_trilegal(trilegal_name, synth_interp, synth_interp_lowtemp, zp, vm, al_av)
                 size = size_t
