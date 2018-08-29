@@ -1,0 +1,14 @@
+# %ECSV 0.9
+# ---
+# datatype:
+# - {name: filter, datatype: string}
+# - {name: zp, unit: W / (m2 um), datatype: float64}
+# - {name: vm, datatype: float64}
+# schema: astropy-2.0
+filter zp vm
+STIS_50CCD 2.640280691698485e-08 0.0
+CGI_narrow 3.112726865941957e-08 0.0
+CGI_wide 1.0388220791286244e-08 0.0
+CGI_IFS660 2.0589162296926022e-08 0.0
+CGI_IFS730 1.5460949687130834e-08 0.0
+CGI_IFS760 1.3741918958126012e-08 0.0
