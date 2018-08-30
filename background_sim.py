@@ -6,7 +6,7 @@ from astropy import units as u
 from astropy import constants
 from scipy import interpolate as interp
 
-def helper(jobs, size, n_stars, current_ra, current_de, spec_orient, wedge_angle, filters, n_inst, inst_filter, delta_mag):
+def helper(jobs, size, n_stars, current_ra, current_de, spec_orient, wedge_angle, filters, n_inst, inst_filter, inst_bkg, delta_mag, star_vmag, star_jmag, star_hmag, star_kmag):
 
     flag = np.zeros((6+n_inst, 0), dtype=bool) #660
 
@@ -27,8 +27,17 @@ def helper(jobs, size, n_stars, current_ra, current_de, spec_orient, wedge_angle
 
             inst_flags = []
             for j in range(0, n_inst):
+                if inst_filter[j] == 'UKIDSS_Y':
+                    bkg_limit = inst_bkg[j] - star_vmag
+                elif inst_filter[j] == 'MKO_J':
+                    bkg_limit = inst_bkg[j] - star_jmag
+                elif inst_filter[j] == 'MKO_H':
+                    bkg_limit = inst_bkg[j] - star_hmag
+                elif inst_filter[j] == 'MKO_Ks':
+                    bkg_limit = inst_bkg[j] - star_kmag
+
                 inst_indx = filters.index(inst_filter[j])
-                inst_flags.append(np.array(inst_con[j](current_rho) > delta_mag[inst_indx][indx], dtype=bool))
+                inst_flags.append(np.array((inst_con[j](current_rho)).clip(None, bkg_limit) > delta_mag[inst_indx][indx], dtype=bool))
 
             ## Narrow
             narrow_indx = filters.index('CGI_narrow')
@@ -234,8 +243,10 @@ def main():
 
     # Store remaining instrument contrast objects and filter names in a list
     inst_con = []
+    inst_band = [] # Which star flux to use for background limit calculation
     inst_filter = []
     inst_name = []
+    inst_bkg_limit = []
 
     ## CHARIS
     charis = ascii.read('CHARIS_IFS_H_contrast.txt')
@@ -243,6 +254,7 @@ def main():
     inst_con.append(charis_con)
     inst_filter.append('MKO_H')
     inst_name.append('CHARIS_IFS')
+    inst_bkg_limit.append(100.0)
 
     ## CHARIS wide-field (goes out to ~2.5" radius, but Y-band)
     ## Approximate this by extending IFS out to 3"
@@ -250,20 +262,25 @@ def main():
     inst_con.append(charis_con)
     inst_filter.append('UKIDSS_Y')
     inst_name.append('CHARIS_Wide')
+    inst_bkg_limit.append(100.0)
 
     ## NIRC2 (PALMS)
     nirc2 = ascii.read('NIRC2_PALMS.txt')
-    nirc2_con = interp.interp1d(nirc2['arcsec'].data/3600.0, nirc2['dmag'].data, kind='linear', bounds_error=False, fill_value=1.0)
+    #nirc2_con = interp.interp1d(nirc2['arcsec'].data/3600.0, nirc2['dmag'].data, kind='linear', bounds_error=False, fill_value=1.0)
+    nirc2_con = lambda rho_deg: 7.1*np.log10(rho_deg*3600.0) + 14.0 # VB's fit to < 1"
     inst_con.append(nirc2_con)
     inst_filter.append('MKO_H')
     inst_name.append('NIRC2_PALMS')
+    inst_bkg_limit.append(23.0)
 
     ## NIRC2 (IDPS, Ks)
     nirc2 = ascii.read('NIRC2_IDPS_Ks.txt')
-    nirc2_con = interp.interp1d(nirc2['asec'].data/3600.0, nirc2['dm'].data, kind='linear', bounds_error=False, fill_value=1.0)
+    #nirc2_con = interp.interp1d(nirc2['asec'].data/3600.0, nirc2['dm'].data, kind='linear', bounds_error=False, fill_value=1.0)
+    nirc2_con = lambda rho_deg: 7.9*np.log10(rho_deg*3600.0) + 13.2 # VB's fit to < 2"
     inst_con.append(nirc2_con)
     inst_filter.append('MKO_Ks')
     inst_name.append('NIRC2_IDPS_Ks')
+    inst_bkg_limit.append(22.0)
 
     ## PALOMAR
 
@@ -313,10 +330,12 @@ def main():
     print_header = True
     f = open('output.txt', 'w', 0)
 
-    for dupl, name, star_pmra, star_pmde, star_vmag, size_b, size_t, besancon, trilegal in zip(starlist['Dupl?'].data, starlist['Name'].data, \
+    for dupl, name, star_pmra, star_pmde, star_vmag, star_jmag, star_hmag, star_kmag, size_b, size_t, besancon, trilegal in zip(starlist['Dupl?'].data, starlist['Name'].data, \
                                                                             starlist['st_pmra'].data/(3600.0*1e3), starlist['st_pmdec'].data/(3600.0*1e3), \
-                                                                            starlist['st_vmag'].data, starlist['size_b'].data, starlist['size_t'].data,
+                                                                            starlist['st_vmag'].data, starlist['st_jmag'].data,starlist['st_hmag'].data,starlist['st_kmag'].data, \
+                                                                            starlist['size_b'].data, starlist['size_t'].data,
                                                                             starlist['Besancon'].data, starlist['Trilegal'].data):
+
 
 
         ## For STIS curve
@@ -377,7 +396,7 @@ def main():
             n_cpu = mp.cpu_count()
             pool = mp.Pool(n_cpu)
             jobs = np.array_split(np.arange(n_sim, dtype=int), n_cpu)
-            result = [pool.apply_async(helper, args=(jobs[i], size, n_stars, current_ra, current_de, spec_orient, wedge_angle, filters, n_inst, inst_filter, delta_mag)) for i in range(0, n_cpu)]
+            result = [pool.apply_async(helper, args=(jobs[i], size, n_stars, current_ra, current_de, spec_orient, wedge_angle, filters, n_inst, inst_filter, inst_bkg_limit, delta_mag, star_vmag, star_jmag, star_hmag, star_kmag)) for i in range(0, n_cpu)]
             output = [p.get() for p in result]
             for i in range(0, n_cpu):
                 flag = np.hstack((flag, output[i]))
