@@ -6,6 +6,64 @@ from astropy import units as u
 from astropy import constants
 from scipy import interpolate as interp
 
+def helper(jobs, size, n_stars, current_ra, current_de, spec_orient, wedge_angle, filters, n_inst, inst_filter, delta_mag):
+
+    flag = np.zeros((6+n_inst, 0), dtype=bool) #660
+
+    for i in range(0, len(jobs)):
+        bkg_ra, bkg_de = np.random.uniform(-np.sqrt(size)/2.0, np.sqrt(size)/2.0, n_stars), np.random.uniform(-np.sqrt(size)/2.0, np.sqrt(size)/2.0, n_stars)
+        rho = np.sqrt(bkg_ra**2.0 + bkg_de**2.0)
+        
+        ## How many are within 2 asec
+        indx = np.where((rho < (2.0/3600.0)))[0]
+        if len(indx) > 0:
+            
+            new_ra = bkg_ra[indx] - current_ra
+            new_de = bkg_de[indx] - current_de
+            current_rho = np.sqrt(new_ra**2.0 + new_de**2.0)
+
+            stis_indx = filters.index('STIS_50CCD')
+            stis_detected = np.array(stis_int(current_rho) > delta_mag[stis_indx][indx], dtype=bool)
+
+            inst_flags = []
+            for j in range(0, n_inst):
+                inst_indx = filters.index(inst_filter[j])
+                inst_flags.append(np.array(inst_con[j](current_rho) > delta_mag[inst_indx][indx], dtype=bool))
+
+            ## Narrow
+            narrow_indx = filters.index('CGI_narrow')
+            narrow_detected = np.array(wfirst_narrow_int(rho[indx]) > delta_mag[narrow_indx][indx], dtype=bool)
+
+            ## Wide
+            wide_indx = filters.index('CGI_wide')
+            wide_detected = np.array(wfirst_wide_int(rho[indx]) > delta_mag[wide_indx][indx], dtype=bool)
+
+            ## IFS
+            for j in range(0, 3):
+                if j == 0: ifs_indx = filters.index('CGI_IFS660')
+                if j == 1: ifs_indx = filters.index('CGI_IFS730')
+                if j == 2: ifs_indx = filters.index('CGI_IFS760')
+
+                detected = wfirst_spec_int[j](rho[indx]) > delta_mag[ifs_indx][indx]
+
+                # Spec FoV is (0+orient) pm 32.5, (180+orient) pm 32.5 (0.57 radians)
+                # Work out angle between background star and the midpoint of each of the wedges
+                pa = np.arctan2(-bkg_ra[indx], bkg_de[indx]) % (2.0*np.pi)
+                delta_pa1 = np.abs(np.arctan2(np.sin(pa - (0.0+spec_orient[jobs[i]])), np.cos(pa - (0.0+spec_orient[jobs[i]]))))
+                delta_pa2 = np.abs(np.arctan2(np.sin(pa - (np.pi+spec_orient[jobs[i]])), np.cos(pa - (np.pi+spec_orient[jobs[i]]))))
+
+                detected = detected & ((delta_pa1 <= (wedge_angle/2.0)) | (delta_pa2 <= (wedge_angle/2.0)))
+
+                if j == 0: ifs_detected1 = np.array(detected, dtype=bool)
+                if j == 1: ifs_detected2 = np.array(detected, dtype=bool)
+                if j == 2: ifs_detected3 = np.array(detected, dtype=bool)
+
+            ## Now append flags to results array
+            flag = np.hstack((flag, np.vstack((narrow_detected, wide_detected, ifs_detected1, ifs_detected2, ifs_detected3, stis_detected, inst_flags))))
+
+    return flag
+
+
 def regrid(data, param):
 
     # Create coordinate array of size (s, length) (i.e. (3,100) for 3 parameters of 100 models)
@@ -120,6 +178,8 @@ def main():
 
     d = 2.37*u.m
 
+    ## Define some global variables
+    global wfirst_narrow_int, wfirst_wide_int, wfirst_spec_int, stis_int, inst_con
     ## Load narrow contrast curve
     l_narrow = 575*u.nm # 10%
     ld_narrow = (((l_narrow/d).to(1))*(u.rad).to(u.deg)).value # degrees
@@ -198,8 +258,16 @@ def main():
     inst_filter.append('MKO_H')
     inst_name.append('NIRC2_PALMS')
 
-    ## GPI bright star contrast (V~5)??
+    ## NIRC2 (IDPS, Ks)
+    nirc2 = ascii.read('NIRC2_IDPS_Ks.txt')
+    nirc2_con = interp.interp1d(nirc2['asec'].data/3600.0, nirc2['dm'].data, kind='linear', bounds_error=False, fill_value=1.0)
+    inst_con.append(nirc2_con)
+    inst_filter.append('MKO_Ks')
+    inst_name.append('NIRC2_IDPS_Ks')
 
+    ## PALOMAR
+
+    ## GPI bright star contrast (V~5)??
 
     n_inst = len(inst_name)
 
@@ -243,6 +311,8 @@ def main():
 
     ## star proper motion converted from mas/yr to deg/yr
     print_header = True
+    f = open('output.txt', 'w')
+
     for dupl, name, star_pmra, star_pmde, star_vmag, size_b, size_t, besancon, trilegal in zip(starlist['Dupl?'].data, starlist['Name'].data, \
                                                                             starlist['st_pmra'].data/(3600.0*1e3), starlist['st_pmdec'].data/(3600.0*1e3), \
                                                                             starlist['st_vmag'].data, starlist['size_b'].data, starlist['size_t'].data,
@@ -257,6 +327,7 @@ def main():
         stis_con_clip =np.clip(stis_con/(10**((3.60-star_vmag)/(-2.5))), stis_bkg, None) 
         stis_int = interp.interp1d(stis_sep, -2.5*np.log10(stis_con_clip), bounds_error=False, fill_value=1.0)
         
+        '''
         fig, ax = plt.subplots(1, figsize=(3, 3))
         ax.plot(stis_sep*3600.0, stis_con_noclip, color='gray')
         ax.plot(stis_sep*3600.0, stis_con_clip, color='red')
@@ -266,6 +337,7 @@ def main():
         ax.set_ylabel('Contrast')
         fig.savefig('STIScontrast-'+name.replace(' ','_')+'.png', dpi=300, bbox_inches='tight')
         plt.close('all')
+        '''
 
         sim_type = 'Besancon'
 
@@ -273,7 +345,7 @@ def main():
         if (dupl == 0):
 
             ## For each star, run n_sim simulations with both besancon and trilegal
-            n_sim = 20000
+            n_sim = 100000
 
             if sim_type == 'Besancon':
                 besancon_name = 'Besancon/output'+str(besancon)+'.fits.gz'
@@ -285,8 +357,10 @@ def main():
                 mass, vmag, synth_mag = read_trilegal(trilegal_name, synth_interp, synth_interp_lowtemp, zp, vm, al_av)
                 size = size_t
 
+            n_stars = len(mass)
+
             #mass, vmag = read_trilegal(trilegal_name)
-            delta_vmag = vmag - star_vmag
+            #delta_vmag = vmag - star_vmag
             delta_mag = synth_mag - star_vmag
 
             wfirst_ra, wfirst_de = 0.0, 0.0 # Star is at (0, 0) in 2028
@@ -300,56 +374,13 @@ def main():
             ## [narrow, wide, ifs660, ifs730, ifs760, STIS, inst1, inst2]
             flag = np.zeros((6+n_inst, 0), dtype=bool) #660
 
-            for i in range(0, n_sim):
-                bkg_ra, bkg_de = np.random.uniform(-np.sqrt(size)/2.0, np.sqrt(size)/2.0, len(mass)), np.random.uniform(-np.sqrt(size)/2.0, np.sqrt(size)/2.0, len(mass))
-                rho = np.sqrt(bkg_ra**2.0 + bkg_de**2.0)
-                
-                ## How many are within 2 asec
-                indx = np.where((rho < (2.0/3600.0)))[0]
-                if len(indx) > 0:
-                    
-                    new_ra = bkg_ra[indx] - current_ra
-                    new_de = bkg_de[indx] - current_de
-                    current_rho = np.sqrt(new_ra**2.0 + new_de**2.0)
-
-                    stis_indx = filters.index('STIS_50CCD')
-                    stis_detected = np.array(stis_int(current_rho) > delta_mag[stis_indx][indx], dtype=bool)
-
-                    inst_flags = []
-                    for j in range(0, n_inst):
-                        inst_indx = filters.index(inst_filter[j])
-                        inst_flags.append(np.array(inst_con[j](current_rho) > delta_mag[inst_indx][indx], dtype=bool))
-
-                    ## Narrow
-                    narrow_indx = filters.index('CGI_narrow')
-                    narrow_detected = np.array(wfirst_narrow_int(rho[indx]) > delta_mag[narrow_indx][indx], dtype=bool)
-
-                    ## Wide
-                    wide_indx = filters.index('CGI_wide')
-                    wide_detected = np.array(wfirst_wide_int(rho[indx]) > delta_mag[wide_indx][indx], dtype=bool)
-
-                    ## IFS
-                    for j in range(0, 3):
-                        if j == 0: ifs_indx = filters.index('CGI_IFS660')
-                        if j == 1: ifs_indx = filters.index('CGI_IFS730')
-                        if j == 2: ifs_indx = filters.index('CGI_IFS760')
-
-                        detected = wfirst_spec_int[j](rho[indx]) > delta_mag[ifs_indx][indx]
-
-                        # Spec FoV is (0+orient) pm 32.5, (180+orient) pm 32.5 (0.57 radians)
-                        # Work out angle between background star and the midpoint of each of the wedges
-                        pa = np.arctan2(-bkg_ra[indx], bkg_de[indx]) % (2.0*np.pi)
-                        delta_pa1 = np.abs(np.arctan2(np.sin(pa - (0.0+spec_orient[i])), np.cos(pa - (0.0+spec_orient[i]))))
-                        delta_pa2 = np.abs(np.arctan2(np.sin(pa - (np.pi+spec_orient[i])), np.cos(pa - (np.pi+spec_orient[i]))))
-
-                        detected = detected & ((delta_pa1 <= (wedge_angle/2.0)) | (delta_pa2 <= (wedge_angle/2.0)))
-
-                        if j == 0: ifs_detected1 = np.array(detected, dtype=bool)
-                        if j == 1: ifs_detected2 = np.array(detected, dtype=bool)
-                        if j == 2: ifs_detected3 = np.array(detected, dtype=bool)
-
-                    ## Now append flags to results array
-                    flag = np.hstack((flag, np.vstack((narrow_detected, wide_detected, ifs_detected1, ifs_detected2, ifs_detected3, stis_detected, inst_flags))))
+            n_cpu = mp.cpu_count()
+            pool = mp.Pool(n_cpu)
+            jobs = np.array_split(np.arange(n_sim, dtype=int), n_cpu)
+            result = [pool.apply_async(helper, args=(jobs[i], size, n_stars, current_ra, current_de, spec_orient, wedge_angle, filters, n_inst, inst_filter, delta_mag)) for i in range(0, n_cpu)]
+            output = [p.get() for p in result]
+            for i in range(0, n_cpu):
+                flag = np.hstack((flag, output[i]))
 
             ## For each CGI mode: print number of background sources detected by CGI, and number detected by STIS, inst1, ..., instn
             n_sim = float(n_sim)
@@ -361,21 +392,23 @@ def main():
                     result_header += ', +'+inst_name[k]
 
             # Print name, % of sims with background objects within 2"
-            result_string = '{:s}, {:.2f}%'.format(name, float(len(flag[0]))/n_sim*100.)
+            result_string = '{:s}, {:.3f}%'.format(name, float(len(flag[0]))/n_sim*100.)
 
             for j in range(0, len(cgi_modes)):
                 # % of sims with background objects detected in this CGI mode, and those recovered with STIS
-                result_string += ', {:.2f}%, {:.2f}%'.format(np.sum(flag[j])/n_sim*100.0, np.sum(flag[j] & flag[5])/n_sim*100.0)
+                result_string += ', {:.3f}%, {:.3f}%'.format(np.sum(flag[j])/n_sim*100.0, np.sum(flag[j] & flag[5])/n_sim*100.0)
                 for k in range(0, n_inst):
                     # and those recovered with the other instruments...
-                    result_string += ', {:.2f}%'.format(np.sum(flag[j] & flag[6+k])/n_sim*100.0)
+                    result_string += ', {:.3f}%'.format(np.sum(flag[j] & flag[6+k])/n_sim*100.0)
 
             if print_header:
                 print result_header
+                f.write(result_header+'\n')
                 print_header = False
             print result_string
+            f.write(result_string+'\n')
 
-
+    f.close()
     return 0
 
 if __name__ == '__main__':
