@@ -6,7 +6,7 @@ from astropy import units as u
 from astropy import constants
 from scipy import interpolate as interp
 
-def helper(jobs, size, n_stars, current_ra, current_de, spec_orient, wedge_angle, filters, n_inst, inst_filter, inst_bkg, delta_mag, star_vmag, star_jmag, star_hmag, star_kmag):
+def helper(jobs, size, n_stars, current_ra, current_de, spec_orient, wedge_angle, filters, n_inst, inst_filter, inst_bkg, inst_fov_limit, delta_mag, star_vmag, star_jmag, star_hmag, star_kmag):
 
     flag = np.zeros((6+n_inst, 0), dtype=bool) #660
 
@@ -37,7 +37,9 @@ def helper(jobs, size, n_stars, current_ra, current_de, spec_orient, wedge_angle
                     bkg_limit = inst_bkg[j] - star_kmag
 
                 inst_indx = filters.index(inst_filter[j])
-                inst_flags.append(np.array((inst_con[j](current_rho)).clip(None, bkg_limit) > delta_mag[inst_indx][indx], dtype=bool))
+                contrast_curve = (inst_con[j](current_rho)).clip(None, bkg_limit)
+                contrast_curve[np.where(current_rho > inst_fov_limit[j])] = 0.0 # Set contrast curve to zero for stars outside FoV
+                inst_flags.append(np.array(contrast_curve > delta_mag[inst_indx][indx], dtype=bool))
 
             ## Narrow
             narrow_indx = filters.index('CGI_narrow')
@@ -247,6 +249,7 @@ def main():
     inst_filter = []
     inst_name = []
     inst_bkg_limit = []
+    inst_fov_limit = []
 
     ## CHARIS
     charis = ascii.read('CHARIS_IFS_H_contrast.txt')
@@ -255,6 +258,7 @@ def main():
     inst_filter.append('MKO_H')
     inst_name.append('CHARIS_IFS')
     inst_bkg_limit.append(100.0)
+    inst_fov_limit.append(100.0/3600.0)
 
     ## CHARIS wide-field (goes out to ~2.5" radius, but Y-band)
     ## Approximate this by extending IFS out to 3"
@@ -263,24 +267,27 @@ def main():
     inst_filter.append('UKIDSS_Y')
     inst_name.append('CHARIS_Wide')
     inst_bkg_limit.append(100.0)
+    inst_fov_limit.append(100.0/3600.0)
 
     ## NIRC2 (PALMS)
     nirc2 = ascii.read('NIRC2_PALMS.txt')
     #nirc2_con = interp.interp1d(nirc2['arcsec'].data/3600.0, nirc2['dmag'].data, kind='linear', bounds_error=False, fill_value=1.0)
-    nirc2_con = lambda rho_deg: (7.1*np.log10(rho_deg*3600.0) + 14.0) if (rho_deg*3600.0) <= 10.0 else 0.0 # VB's fit to < 1"
+    nirc2_con = lambda rho_deg: 7.1*np.log10(rho_deg*3600.0) + 14.0 # VB's fit to < 1"
     inst_con.append(nirc2_con)
     inst_filter.append('MKO_H')
     inst_name.append('NIRC2_PALMS')
     inst_bkg_limit.append(23.0)
+    inst_fov_limit.append(100.0/3600.0)
 
     ## NIRC2 (IDPS, Ks)
     nirc2 = ascii.read('NIRC2_IDPS_Ks.txt')
     #nirc2_con = interp.interp1d(nirc2['asec'].data/3600.0, nirc2['dm'].data, kind='linear', bounds_error=False, fill_value=1.0)
-    nirc2_con = lambda rho_deg: (7.9*np.log10(rho_deg*3600.0) + 13.2) if (rho_deg*3600.0) <= 10.0 else 0.0 # VB's fit to < 2"
+    nirc2_con = lambda rho_deg: 7.9*np.log10(rho_deg*3600.0) + 13.2 # VB's fit to < 2"
     inst_con.append(nirc2_con)
     inst_filter.append('MKO_Ks')
     inst_name.append('NIRC2_IDPS_Ks')
     inst_bkg_limit.append(22.0)
+    inst_fov_limit.append(100.0/3600.0)
 
     ## PALOMAR
 
@@ -396,7 +403,7 @@ def main():
             n_cpu = mp.cpu_count()
             pool = mp.Pool(n_cpu)
             jobs = np.array_split(np.arange(n_sim, dtype=int), n_cpu)
-            result = [pool.apply_async(helper, args=(jobs[i], size, n_stars, current_ra, current_de, spec_orient, wedge_angle, filters, n_inst, inst_filter, inst_bkg_limit, delta_mag, star_vmag, star_jmag, star_hmag, star_kmag)) for i in range(0, n_cpu)]
+            result = [pool.apply_async(helper, args=(jobs[i], size, n_stars, current_ra, current_de, spec_orient, wedge_angle, filters, n_inst, inst_filter, inst_bkg_limit, inst_fov_limit, delta_mag, star_vmag, star_jmag, star_hmag, star_kmag)) for i in range(0, n_cpu)]
             output = [p.get() for p in result]
             for i in range(0, n_cpu):
                 flag = np.hstack((flag, output[i]))
