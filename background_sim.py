@@ -9,10 +9,37 @@ from scipy import interpolate as interp
 def helper(jobs, size, n_stars, current_ra, current_de, spec_orient, wedge_angle, filters, n_inst, inst_filter, inst_bkg, inst_fov_limit, delta_mag, star_vmag, star_jmag, star_hmag, star_kmag):
 
     flag = np.zeros((6+n_inst, 0), dtype=bool) #660
+    reflected_flag = np.zeros((2, 5), dtype=int)
 
     for i in range(0, len(jobs)):
         bkg_ra, bkg_de = np.random.uniform(-np.sqrt(size)/2.0, np.sqrt(size)/2.0, n_stars), np.random.uniform(-np.sqrt(size)/2.0, np.sqrt(size)/2.0, n_stars)
         rho = np.sqrt(bkg_ra**2.0 + bkg_de**2.0)
+        rho_asec = rho*3600.0
+
+        indx200 = np.where(rho_asec < 200.0)[0]
+        if len(indx200) > 0:
+            j = 0
+            for mode, limit in zip(('CGI_narrow', 'CGI_wide', 'CGI_IFS660', 'CGI_IFS730', 'CGI_IFS760'), (23.11, 23.05, 21.0, 21.0, 21.0)):
+                ## Work out if the stray light from any simulated background object is significant
+                ## SPLC
+                cn = 10**(delta_mag[filters.index(mode)][indx200]/(-2.5))
+                splc_ni_mag = -2.5*np.log10(cn * (10**(-6.988*np.exp(0.001008*rho_asec[indx200]))))
+                #for k in range(0, len(indx200)):
+                #    print cn[k], splc_ni_mag[k], rho_asec[indx200][k], splc_ni_mag[k]<limit
+                #print np.sum(splc_ni_mag < limit)
+
+                #Fit 0-25asec with straight line between 10^-3 and 10^-7
+                indx25 = np.where(rho_asec[indx200] < 25.0)[0]
+                if len(indx25) > 0:
+                    splc_ni_mag[indx25] = -2.5*np.log10(cn[indx25] * (10**(((rho_asec[indx200][indx25]/25.0)*(-4.0)) - 3.0)))
+
+                ##HLC
+                hlc_ni_mag = -2.5*np.log10(cn * (10**(-10.14*np.exp(0.004823*rho_asec[indx200]) + 14.72*np.exp(-0.1531*rho_asec[indx200]))))
+                
+                ind = np.where(splc_ni_mag < limit)
+                reflected_flag[0, j] += np.sum(splc_ni_mag < limit)
+                reflected_flag[1, j] += np.sum(hlc_ni_mag < limit)
+                j+=1
         
         ## How many are within 2 asec
         indx = np.where((rho < (2.0/3600.0)))[0]
@@ -72,7 +99,7 @@ def helper(jobs, size, n_stars, current_ra, current_de, spec_orient, wedge_angle
             ## Now append flags to results array
             flag = np.hstack((flag, np.vstack((narrow_detected, wide_detected, ifs_detected1, ifs_detected2, ifs_detected3, stis_detected, inst_flags))))
 
-    return flag
+    return flag, reflected_flag
 
 
 def regrid(data, param):
@@ -298,6 +325,7 @@ def main():
 
     ## Define filters and compute extinction from Cardelli et al. 1989
     filters = ['STIS_50CCD', 'CGI_narrow', 'CGI_wide', 'CGI_IFS660', 'CGI_IFS730', 'CGI_IFS760', '2MASS_H', 'UKIDSS_Y', 'MKO_J', 'MKO_H', 'MKO_Ks']
+    st_filter = [       'V',          'V',        'V',          'V',          'V',          'V',       'H',        'J',     'J',     'H',      'K']
     y = (1.0/np.array([0.556, 0.574, 0.819, 0.654, 0.721, 0.749, 1.64, 1.03, 1.24, 1.62, 2.13])) - 1.82
     a = 1.0 + 0.17699*y - 0.50447*y**2 - 0.02427*y**3 + 0.72085*y**4 + 0.01979*y**5 - 0.77530*y**6 + 0.32999*y**7
     b = 1.41338*y + 2.28305*y**2 + 1.07233*y**3 - 5.38434*y**4 - 0.62251*y**5 + 5.30260*y**6 - 2.09002*y**7
@@ -387,7 +415,16 @@ def main():
 
             #mass, vmag = read_trilegal(trilegal_name)
             #delta_vmag = vmag - star_vmag
-            delta_mag = synth_mag - star_vmag
+            delta_mag = np.copy(synth_mag)
+            for i in range(0, len(filters)):
+                if st_filter[i] == 'V':
+                    delta_mag[i] -= star_vmag
+                elif st_filter[i] == 'J':
+                    delta_mag[i] -= star_jmag
+                elif st_filter[i] == 'H':
+                    delta_mag[i] -= star_hmag
+                elif st_filter[i] == 'K':
+                    delta_mag[i] -= star_kmag
 
             wfirst_ra, wfirst_de = 0.0, 0.0 # Star is at (0, 0) in 2028
             baseline = 8.0 # years between STIS and WFIRST observations
@@ -399,6 +436,7 @@ def main():
             ## Save results in a (6+n_inst, n) array
             ## [narrow, wide, ifs660, ifs730, ifs760, STIS, inst1, inst2]
             flag = np.zeros((6+n_inst, 0), dtype=bool) #660
+            reflected_flag = np.zeros((2, 5), dtype=np.float64)
 
             n_cpu = mp.cpu_count()
             pool = mp.Pool(n_cpu)
@@ -406,7 +444,8 @@ def main():
             result = [pool.apply_async(helper, args=(jobs[i], size, n_stars, current_ra, current_de, spec_orient, wedge_angle, filters, n_inst, inst_filter, inst_bkg_limit, inst_fov_limit, delta_mag, star_vmag, star_jmag, star_hmag, star_kmag)) for i in range(0, n_cpu)]
             output = [p.get() for p in result]
             for i in range(0, n_cpu):
-                flag = np.hstack((flag, output[i]))
+                flag = np.hstack((flag, output[i][0]))
+                reflected_flag += output[i][1]
 
             pool.close()
             pool.join()
@@ -429,6 +468,10 @@ def main():
                 for k in range(0, n_inst):
                     # and those recovered with the other instruments...
                     result_string += ', {:.3f}%'.format(np.sum(flag[j] & flag[6+k])/n_sim*100.0)
+
+            for j in range(0, 2):
+                for k in range(0, 5):
+                    result_string += ', {:.3f}%'.format(reflected_flag[j, k]/n_sim*100.0)
 
             if print_header:
                 print result_header
