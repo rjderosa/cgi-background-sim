@@ -267,7 +267,7 @@ def main():
     ## NIRC2 (PALMS)
     nirc2 = ascii.read('NIRC2_PALMS.txt')
     #nirc2_con = interp.interp1d(nirc2['arcsec'].data/3600.0, nirc2['dmag'].data, kind='linear', bounds_error=False, fill_value=1.0)
-    nirc2_con = lambda rho_deg: 7.1*np.log10(rho_deg*3600.0) + 14.0 # VB's fit to < 1"
+    nirc2_con = lambda rho_deg: (7.1*np.log10(rho_deg*3600.0) + 14.0) if (rho_deg*3600.0) <= 10.0 else 0.0 # VB's fit to < 1"
     inst_con.append(nirc2_con)
     inst_filter.append('MKO_H')
     inst_name.append('NIRC2_PALMS')
@@ -276,7 +276,7 @@ def main():
     ## NIRC2 (IDPS, Ks)
     nirc2 = ascii.read('NIRC2_IDPS_Ks.txt')
     #nirc2_con = interp.interp1d(nirc2['asec'].data/3600.0, nirc2['dm'].data, kind='linear', bounds_error=False, fill_value=1.0)
-    nirc2_con = lambda rho_deg: 7.9*np.log10(rho_deg*3600.0) + 13.2 # VB's fit to < 2"
+    nirc2_con = lambda rho_deg: (7.9*np.log10(rho_deg*3600.0) + 13.2) if (rho_deg*3600.0) <= 10.0 else 0.0 # VB's fit to < 2"
     inst_con.append(nirc2_con)
     inst_filter.append('MKO_Ks')
     inst_name.append('NIRC2_IDPS_Ks')
