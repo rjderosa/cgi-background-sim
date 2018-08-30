@@ -311,7 +311,7 @@ def main():
 
     ## star proper motion converted from mas/yr to deg/yr
     print_header = True
-    f = open('output.txt', 'w')
+    f = open('output.txt', 'w', 0)
 
     for dupl, name, star_pmra, star_pmde, star_vmag, size_b, size_t, besancon, trilegal in zip(starlist['Dupl?'].data, starlist['Name'].data, \
                                                                             starlist['st_pmra'].data/(3600.0*1e3), starlist['st_pmdec'].data/(3600.0*1e3), \
@@ -381,6 +381,9 @@ def main():
             output = [p.get() for p in result]
             for i in range(0, n_cpu):
                 flag = np.hstack((flag, output[i]))
+
+            pool.close()
+            pool.join()
 
             ## For each CGI mode: print number of background sources detected by CGI, and number detected by STIS, inst1, ..., instn
             n_sim = float(n_sim)
