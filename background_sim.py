@@ -277,7 +277,7 @@ def main():
     inst_filter.append('MKO_H')
     inst_name.append('NIRC2_PALMS')
     inst_bkg_limit.append(23.0)
-    inst_fov_limit.append(100.0/3600.0)
+    inst_fov_limit.append(10.0/3600.0)
 
     ## NIRC2 (IDPS, Ks)
     nirc2 = ascii.read('NIRC2_IDPS_Ks.txt')
@@ -287,7 +287,7 @@ def main():
     inst_filter.append('MKO_Ks')
     inst_name.append('NIRC2_IDPS_Ks')
     inst_bkg_limit.append(22.0)
-    inst_fov_limit.append(100.0/3600.0)
+    inst_fov_limit.append(10.0/3600.0)
 
     ## PALOMAR
 
