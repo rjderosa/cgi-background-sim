@@ -9,7 +9,7 @@ from scipy import interpolate as interp
 def helper(jobs, size, n_stars, current_ra, current_de, spec_orient, wedge_angle, filters, n_inst, inst_filter, inst_bkg, inst_fov_limit, delta_mag, star_vmag, star_jmag, star_hmag, star_kmag):
 
     flag = np.zeros((6+n_inst, 0), dtype=bool) #660
-    reflected_flag = np.zeros(4, dtype=int) #HLC+Narrow, SLPC+IFS(x3)
+    scattered_flag = np.zeros(4, dtype=int) #HLC+Narrow, SLPC+IFS(x3)
 
     for i in range(0, len(jobs)):
         bkg_ra, bkg_de = np.random.uniform(-np.sqrt(size)/2.0, np.sqrt(size)/2.0, n_stars), np.random.uniform(-np.sqrt(size)/2.0, np.sqrt(size)/2.0, n_stars)
@@ -27,13 +27,18 @@ def helper(jobs, size, n_stars, current_ra, current_de, spec_orient, wedge_angle
                     ## SPLC
                     ## 0 to -6 between 0 and 15"
                     ## -6 to -7 between 15" and 25"
+                    
                     rho_asec600 = rho_asec[indx200] / (wl/0.60) # Scale relative to 600nm
-                    indx15 = np.where(rho_asec600 >= 15)
-                    splc_ni4 = cn * 10**(-(6./15)*rho_asec600)
-                    splc_ni4[indx15] = cn[indx15] * 10**((-rho_asec600[indx15]-15)*0.1 - 6.0)
+                    splc_ni4 = cn * 10**(-rho_asec600)
+                    
+                    indx4 = np.where(rho_asec600 >= 4.5)
+                    splc_ni4[indx4] = cn[indx4] * 10**((-rho_asec600[indx4]-4.5)*0.2 - 4.5)
+                    
+                    indx15 = np.where(rho_asec >= 15) # field stop
+                    splc_ni4[indx15] = 1e-100
                     splc_ni_mag = -2.5*np.log10(splc_ni4)
 
-                    reflected_flag[j] += np.sum(splc_ni_mag < limit)
+                    scattered_flag[j] += np.sum(splc_ni_mag < limit)
                 
                 else:
                     ## HLC
@@ -44,9 +49,13 @@ def helper(jobs, size, n_stars, current_ra, current_de, spec_orient, wedge_angle
                     indx5 = np.where(rho_asec550 >= 5)
                     hlc_ni4 = cn * 10**(-(6./5)*rho_asec550)
                     hlc_ni4[indx5] = cn[indx5] * 10**( -(rho_asec550[indx5]-5)*0.25 - 6)
+                    
+                    indx15 = np.where(rho_asec >= 15) # field stop
+                    hlc_ni4[indx15] = 1e-100
+
                     hlc_ni_mag = -2.5*np.log10(hlc_ni4)
                 
-                    reflected_flag[j] += np.sum(hlc_ni_mag < limit)
+                    scattered_flag[j] += np.sum(hlc_ni_mag < limit)
 
                 j+=1
         
@@ -108,7 +117,7 @@ def helper(jobs, size, n_stars, current_ra, current_de, spec_orient, wedge_angle
             ## Now append flags to results array
             flag = np.hstack((flag, np.vstack((narrow_detected, wide_detected, ifs_detected1, ifs_detected2, ifs_detected3, stis_detected, inst_flags))))
 
-    return flag, reflected_flag
+    return flag, scattered_flag
 
 
 def regrid(data, param):
@@ -445,7 +454,7 @@ def main():
             ## Save results in a (6+n_inst, n) array
             ## [narrow, wide, ifs660, ifs730, ifs760, STIS, inst1, inst2]
             flag = np.zeros((6+n_inst, 0), dtype=bool) #660
-            reflected_flag = np.zeros(4, dtype=np.float64)
+            scattered_flag = np.zeros(4, dtype=np.float64)
 
             n_cpu = mp.cpu_count()
             pool = mp.Pool(n_cpu)
@@ -455,7 +464,7 @@ def main():
             
             for i in range(0, n_cpu):
                 flag = np.hstack((flag, output[i][0]))
-                reflected_flag += output[i][1]
+                scattered_flag += output[i][1]
 
             pool.close()
             pool.join()
@@ -480,7 +489,7 @@ def main():
                     result_string += ', {:.3f}%'.format(np.sum(flag[j] & flag[6+k])/n_sim*100.0)
 
             for j in range(0, 4):
-                result_string += ', {:.3f}%'.format(reflected_flag[j]/n_sim*100.0)
+                result_string += ', {:.3f}%'.format(scattered_flag[j]/n_sim*100.0)
 
             if print_header:
                 print result_header
