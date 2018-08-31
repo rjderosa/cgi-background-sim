@@ -19,22 +19,26 @@ def helper(jobs, size, n_stars, current_ra, current_de, spec_orient, wedge_angle
         indx200 = np.where(rho_asec < 200.0)[0]
         if len(indx200) > 0:
             j = 0
-            for mode, limit in zip(('CGI_narrow', 'CGI_wide', 'CGI_IFS660', 'CGI_IFS730', 'CGI_IFS760'), (23.11, 23.05, 21.0, 21.0, 21.0)):
+            for mode, limit, wl in zip(('CGI_narrow', 'CGI_wide', 'CGI_IFS660', 'CGI_IFS730', 'CGI_IFS760'), (23.11, 23.05, 21.0, 21.0, 21.0), (0.574, 0.819, 0.654, 0.721, 0.749)):
+                
+                rho_asec550 = rho_asec[indx200] / (wl/0.55) # Scale relative to 550nm
+                rho_asec600 = rho_asec[indx200] / (wl/0.60) # Scale relative to 600nm
+
                 ## Work out if the stray light from any simulated background object is significant
                 ## SPLC
                 cn = 10**(delta_mag[filters.index(mode)][indx200]/(-2.5))
-                splc_ni_mag = -2.5*np.log10(cn * (10**(-6.988*np.exp(0.001008*rho_asec[indx200]))))
+                splc_ni_mag = -2.5*np.log10(cn * (10**(-6.988*np.exp(0.001008*rho_asec600))))
                 #for k in range(0, len(indx200)):
                 #    print cn[k], splc_ni_mag[k], rho_asec[indx200][k], splc_ni_mag[k]<limit
                 #print np.sum(splc_ni_mag < limit)
 
                 #Fit 0-25asec with straight line between 10^-3 and 10^-7
-                indx25 = np.where(rho_asec[indx200] < 25.0)[0]
+                indx25 = np.where(rho_asec600 < 25.0)[0]
                 if len(indx25) > 0:
-                    splc_ni_mag[indx25] = -2.5*np.log10(cn[indx25] * (10**(((rho_asec[indx200][indx25]/25.0)*(-4.0)) - 3.0)))
+                    splc_ni_mag[indx25] = -2.5*np.log10(cn[indx25] * (10**(((rho_asec600[indx25]/25.0)*(-4.0)) - 3.0)))
 
                 ##HLC
-                hlc_ni_mag = -2.5*np.log10(cn * (10**(-10.14*np.exp(0.004823*rho_asec[indx200]) + 14.72*np.exp(-0.1531*rho_asec[indx200]))))
+                hlc_ni_mag = -2.5*np.log10(cn * (10**(-10.14*np.exp(0.004823*rho_asec550) + 14.72*np.exp(-0.1531*rho_asec550))))
                 
                 ind = np.where(splc_ni_mag < limit)
                 reflected_flag[0, j] += np.sum(splc_ni_mag < limit)
