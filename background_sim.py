@@ -25,14 +25,14 @@ def helper(jobs, size, n_stars, current_ra, current_de, spec_orient, wedge_angle
 
                 if 'IFS' in mode:
                     ## SPLC
-                    ## 0 to -6 between 0 and 15"
-                    ## -6 to -7 between 15" and 25"
+                    ## 0 to -4.5 between 0 and 4.5"
+                    ## -4.5 to -7 between 4.5" and 25"
                     
                     rho_asec600 = rho_asec[indx200] / (wl/0.60) # Scale relative to 600nm
                     splc_ni4 = cn * 10**(-rho_asec600)
                     
                     indx4 = np.where(rho_asec600 >= 4.5)
-                    splc_ni4[indx4] = cn[indx4] * 10**((-rho_asec600[indx4]-4.5)*0.2 - 4.5)
+                    splc_ni4[indx4] = cn[indx4] * 10**(-(rho_asec600[indx4]-4.5)*0.125 - 4.5)
                     
                     indx15 = np.where(rho_asec >= 15) # field stop
                     splc_ni4[indx15] = 1e-100
@@ -45,9 +45,9 @@ def helper(jobs, size, n_stars, current_ra, current_de, spec_orient, wedge_angle
                     ## 0 to -6 between 0 and 5"
                     ## -6 to -8.5 between 5" and 15"
                     rho_asec550 = rho_asec[indx200] / (wl/0.55) # Scale relative to 550nm
+                    hlc_ni4 = cn * 10**(-(6./5)*rho_asec550)
 
                     indx5 = np.where(rho_asec550 >= 5)
-                    hlc_ni4 = cn * 10**(-(6./5)*rho_asec550)
                     hlc_ni4[indx5] = cn[indx5] * 10**( -(rho_asec550[indx5]-5)*0.25 - 6)
                     
                     indx15 = np.where(rho_asec >= 15) # field stop
