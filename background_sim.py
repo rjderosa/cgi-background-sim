@@ -9,40 +9,45 @@ from scipy import interpolate as interp
 def helper(jobs, size, n_stars, current_ra, current_de, spec_orient, wedge_angle, filters, n_inst, inst_filter, inst_bkg, inst_fov_limit, delta_mag, star_vmag, star_jmag, star_hmag, star_kmag):
 
     flag = np.zeros((6+n_inst, 0), dtype=bool) #660
-    reflected_flag = np.zeros((2, 5), dtype=int)
+    reflected_flag = np.zeros(4, dtype=int) #HLC+Narrow, SLPC+IFS(x3)
 
     for i in range(0, len(jobs)):
         bkg_ra, bkg_de = np.random.uniform(-np.sqrt(size)/2.0, np.sqrt(size)/2.0, n_stars), np.random.uniform(-np.sqrt(size)/2.0, np.sqrt(size)/2.0, n_stars)
         rho = np.sqrt(bkg_ra**2.0 + bkg_de**2.0)
         rho_asec = rho*3600.0
 
-        indx200 = np.where(rho_asec < 200.0)[0]
+        indx200 = np.where(rho_asec < 25.0)[0]
         if len(indx200) > 0:
-            j = 0
-            for mode, limit, wl in zip(('CGI_narrow', 'CGI_wide', 'CGI_IFS660', 'CGI_IFS730', 'CGI_IFS760'), (23.11, 23.05, 21.0, 21.0, 21.0), (0.574, 0.819, 0.654, 0.721, 0.749)):
-                
-                rho_asec550 = rho_asec[indx200] / (wl/0.55) # Scale relative to 550nm
-                rho_asec600 = rho_asec[indx200] / (wl/0.60) # Scale relative to 600nm
-
+            j=0
+            for mode, limit, wl in zip(('CGI_narrow', 'CGI_IFS660', 'CGI_IFS730', 'CGI_IFS760'), (23.11, 21.0, 21.0, 21.0), (0.574, 0.654, 0.721, 0.749)):
                 ## Work out if the stray light from any simulated background object is significant
-                ## SPLC
                 cn = 10**(delta_mag[filters.index(mode)][indx200]/(-2.5))
-                splc_ni_mag = -2.5*np.log10(cn * (10**(-6.988*np.exp(0.001008*rho_asec600))))
-                #for k in range(0, len(indx200)):
-                #    print cn[k], splc_ni_mag[k], rho_asec[indx200][k], splc_ni_mag[k]<limit
-                #print np.sum(splc_ni_mag < limit)
 
-                #Fit 0-25asec with straight line between 10^-3 and 10^-7
-                indx25 = np.where(rho_asec600 < 25.0)[0]
-                if len(indx25) > 0:
-                    splc_ni_mag[indx25] = -2.5*np.log10(cn[indx25] * (10**(((rho_asec600[indx25]/25.0)*(-4.0)) - 3.0)))
+                if 'IFS' in mode:
+                    ## SPLC
+                    ## 0 to -6 between 0 and 15"
+                    ## -6 to -7 between 15" and 25"
+                    rho_asec600 = rho_asec[indx200] / (wl/0.60) # Scale relative to 600nm
+                    indx15 = np.where(rho_asec600 >= 15)
+                    splc_ni4 = cn * 10**(-(6./15)*rho_asec600)
+                    splc_ni4[indx15] = cn[indx15] * 10**((-rho_asec600[indx15]-15)*0.1 - 6.0)
+                    splc_ni_mag = -2.5*np.log10(splc_ni4)
 
-                ##HLC
-                hlc_ni_mag = -2.5*np.log10(cn * (10**(-10.14*np.exp(0.004823*rho_asec550) + 14.72*np.exp(-0.1531*rho_asec550))))
+                    reflected_flag[j] += np.sum(splc_ni_mag < limit)
                 
-                ind = np.where(splc_ni_mag < limit)
-                reflected_flag[0, j] += np.sum(splc_ni_mag < limit)
-                reflected_flag[1, j] += np.sum(hlc_ni_mag < limit)
+                else:
+                    ## HLC
+                    ## 0 to -6 between 0 and 5"
+                    ## -6 to -8.5 between 5" and 15"
+                    rho_asec550 = rho_asec[indx200] / (wl/0.55) # Scale relative to 550nm
+
+                    indx5 = np.where(rho_asec550 >= 5)
+                    hlc_ni4 = cn * 10**(-(6./5)*rho_asec550)
+                    hlc_ni4[indx5] = cn[indx5] * 10**( -(rho_asec550[indx5]-5)*0.25 - 6)
+                    hlc_ni_mag = -2.5*np.log10(hlc_ni4)
+                
+                    reflected_flag[j] += np.sum(hlc_ni_mag < limit)
+
                 j+=1
         
         ## How many are within 2 asec
@@ -440,13 +445,14 @@ def main():
             ## Save results in a (6+n_inst, n) array
             ## [narrow, wide, ifs660, ifs730, ifs760, STIS, inst1, inst2]
             flag = np.zeros((6+n_inst, 0), dtype=bool) #660
-            reflected_flag = np.zeros((2, 5), dtype=np.float64)
+            reflected_flag = np.zeros(4, dtype=np.float64)
 
             n_cpu = mp.cpu_count()
             pool = mp.Pool(n_cpu)
             jobs = np.array_split(np.arange(n_sim, dtype=int), n_cpu)
             result = [pool.apply_async(helper, args=(jobs[i], size, n_stars, current_ra, current_de, spec_orient, wedge_angle, filters, n_inst, inst_filter, inst_bkg_limit, inst_fov_limit, delta_mag, star_vmag, star_jmag, star_hmag, star_kmag)) for i in range(0, n_cpu)]
             output = [p.get() for p in result]
+            
             for i in range(0, n_cpu):
                 flag = np.hstack((flag, output[i][0]))
                 reflected_flag += output[i][1]
@@ -473,9 +479,8 @@ def main():
                     # and those recovered with the other instruments...
                     result_string += ', {:.3f}%'.format(np.sum(flag[j] & flag[6+k])/n_sim*100.0)
 
-            for j in range(0, 2):
-                for k in range(0, 5):
-                    result_string += ', {:.3f}%'.format(reflected_flag[j, k]/n_sim*100.0)
+            for j in range(0, 4):
+                result_string += ', {:.3f}%'.format(reflected_flag[j]/n_sim*100.0)
 
             if print_header:
                 print result_header
