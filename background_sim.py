@@ -10,6 +10,8 @@ def helper(jobs, size, n_stars, current_ra, current_de, spec_orient, wedge_angle
 
     flag = np.zeros((6+n_inst, 0), dtype=bool) #660
     scattered_flag = np.zeros(4, dtype=int) #HLC+Narrow, SLPC+IFS(x3)
+    scattered_seps = []
+    np.random.seed(seed=jobs[0])
 
     for i in range(0, len(jobs)):
         bkg_ra, bkg_de = np.random.uniform(-np.sqrt(size)/2.0, np.sqrt(size)/2.0, n_stars), np.random.uniform(-np.sqrt(size)/2.0, np.sqrt(size)/2.0, n_stars)
@@ -38,7 +40,11 @@ def helper(jobs, size, n_stars, current_ra, current_de, spec_orient, wedge_angle
                     splc_ni4[indx15] = 1e-100
                     splc_ni_mag = -2.5*np.log10(splc_ni4)
 
-                    scattered_flag[j] += np.sum(splc_ni_mag < limit)
+                    detected = splc_ni_mag < limit
+                    if mode == 'CGI_IFS760':
+                        scattered_seps = np.append(scattered_seps, rho_asec[indx200][np.where(detected)])
+
+                    scattered_flag[j] += np.sum(detected)
                 
                 else:
                     ## HLC
@@ -117,7 +123,7 @@ def helper(jobs, size, n_stars, current_ra, current_de, spec_orient, wedge_angle
             ## Now append flags to results array
             flag = np.hstack((flag, np.vstack((narrow_detected, wide_detected, ifs_detected1, ifs_detected2, ifs_detected3, stis_detected, inst_flags))))
 
-    return flag, scattered_flag
+    return flag, scattered_flag, scattered_seps
 
 
 def regrid(data, param):
@@ -417,7 +423,7 @@ def main():
         if (dupl == 0):
 
             ## For each star, run n_sim simulations with both besancon and trilegal
-            n_sim = 100000
+            n_sim = 200000
 
             if sim_type == 'Besancon':
                 besancon_name = 'Besancon/output'+str(besancon)+'.fits.gz'
@@ -455,6 +461,7 @@ def main():
             ## [narrow, wide, ifs660, ifs730, ifs760, STIS, inst1, inst2]
             flag = np.zeros((6+n_inst, 0), dtype=bool) #660
             scattered_flag = np.zeros(4, dtype=np.float64)
+            scattered_seps = []
 
             n_cpu = mp.cpu_count()
             pool = mp.Pool(n_cpu)
@@ -465,9 +472,17 @@ def main():
             for i in range(0, n_cpu):
                 flag = np.hstack((flag, output[i][0]))
                 scattered_flag += output[i][1]
+                scattered_seps = np.append(scattered_seps, output[i][2])
 
             pool.close()
             pool.join()
+
+            fig, ax = plt.subplots(1, figsize=(4, 4))
+            ax.hist(scattered_seps, bins=np.logspace(-1, 1.3, 50), color='k',histtype='step')
+            ax.set_xlabel('Separation (asec)')
+            ax.set_xscale('log')
+            fig.savefig('debug-IFS760_sepdist-'+name.replace(' ','_')+'.png', dpi=300, bbox_inches='tight')
+            plt.close('all')
 
             ## For each CGI mode: print number of background sources detected by CGI, and number detected by STIS, inst1, ..., instn
             n_sim = float(n_sim)
