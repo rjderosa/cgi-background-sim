@@ -34,7 +34,7 @@ def helper(jobs, size, n_stars, current_ra, current_de, spec_orient, wedge_angle
                     indx4 = np.where(rho_asec600 >= 4.5)
                     splc_ni4[indx4] = cn[indx4] * 10**(-(rho_asec600[indx4]-4.5)*0.125 - 4.5)
                     
-                    indx15 = np.where(rho_asec >= 15) # field stop
+                    indx15 = np.where(rho_asec[indx200] >= 15) # field stop
                     splc_ni4[indx15] = 1e-100
                     splc_ni_mag = -2.5*np.log10(splc_ni4)
 
@@ -50,7 +50,7 @@ def helper(jobs, size, n_stars, current_ra, current_de, spec_orient, wedge_angle
                     indx5 = np.where(rho_asec550 >= 5)
                     hlc_ni4[indx5] = cn[indx5] * 10**( -(rho_asec550[indx5]-5)*0.25 - 6)
                     
-                    indx15 = np.where(rho_asec >= 15) # field stop
+                    indx15 = np.where(rho_asec[indx200] >= 15) # field stop
                     hlc_ni4[indx15] = 1e-100
 
                     hlc_ni_mag = -2.5*np.log10(hlc_ni4)
