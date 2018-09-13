@@ -10,6 +10,7 @@ def helper(jobs, size, n_stars, current_ra, current_de, spec_orient, wedge_angle
 
     flag = np.zeros((6+n_inst, 0), dtype=bool) #660
     scattered_flag = np.zeros(4, dtype=int) #HLC+Narrow, SLPC+IFS(x3)
+    scattered_flag2 = np.zeros(4, dtype=int) #Glint stars also detected by NIRC2 PALMS
     scattered_seps = []
     np.random.seed(seed=jobs[0])
 
@@ -17,6 +18,8 @@ def helper(jobs, size, n_stars, current_ra, current_de, spec_orient, wedge_angle
         bkg_ra, bkg_de = np.random.uniform(-np.sqrt(size)/2.0, np.sqrt(size)/2.0, n_stars), np.random.uniform(-np.sqrt(size)/2.0, np.sqrt(size)/2.0, n_stars)
         rho = np.sqrt(bkg_ra**2.0 + bkg_de**2.0)
         rho_asec = rho*3600.0
+        current_rho = np.sqrt((bkg_ra - current_ra)**2.0 + (bkg_de - current_de)**2.0)
+
 
         indx200 = np.where(rho_asec < 25.0)[0]
         if len(indx200) > 0:
@@ -45,7 +48,13 @@ def helper(jobs, size, n_stars, current_ra, current_de, spec_orient, wedge_angle
                         scattered_seps = np.append(scattered_seps, rho_asec[indx200][np.where(detected)])
 
                     scattered_flag[j] += np.sum(detected)
-                
+                    
+                    # Hardcoded for PALMS H curve
+                    contrast_curve = inst_con[2](current_rho[indx200])
+                    contrast_curve[np.where(current_rho[indx200] > inst_fov_limit[2])] = 0.0
+                    detected2 = (splc_ni_mag < limit) & (contrast_curve > delta_mag[filters.index('MKO_H')][indx200])
+                    scattered_flag2[j] += np.sum(detected2)
+
                 else:
                     ## HLC
                     ## 0 to -6 between 0 and 5"
@@ -63,7 +72,15 @@ def helper(jobs, size, n_stars, current_ra, current_de, spec_orient, wedge_angle
                 
                     scattered_flag[j] += np.sum(hlc_ni_mag < limit)
 
+                    # Hardcoded for PALMS H curve
+                    contrast_curve = inst_con[2](current_rho[indx200])
+                    contrast_curve[np.where(current_rho[indx200] > inst_fov_limit[2])] = 0.0
+                    detected2 = (hlc_ni_mag < limit) & (contrast_curve > delta_mag[filters.index('MKO_H')][indx200])
+                    scattered_flag2[j] += np.sum(detected2)
+
                 j+=1
+            ## Would any be detected by precursor imaging?
+
         
         ## How many are within 2 asec
         indx = np.where((rho < (2.0/3600.0)))[0]
@@ -123,7 +140,7 @@ def helper(jobs, size, n_stars, current_ra, current_de, spec_orient, wedge_angle
             ## Now append flags to results array
             flag = np.hstack((flag, np.vstack((narrow_detected, wide_detected, ifs_detected1, ifs_detected2, ifs_detected3, stis_detected, inst_flags))))
 
-    return flag, scattered_flag, scattered_seps
+    return flag, scattered_flag, scattered_seps, scattered_flag2
 
 
 def regrid(data, param):
@@ -346,14 +363,23 @@ def main():
 
     n_inst = len(inst_name)
 
-
     ## Define filters and compute extinction from Cardelli et al. 1989
     filters = ['STIS_50CCD', 'CGI_narrow', 'CGI_wide', 'CGI_IFS660', 'CGI_IFS730', 'CGI_IFS760', '2MASS_H', 'UKIDSS_Y', 'MKO_J', 'MKO_H', 'MKO_Ks']
     st_filter = [       'V',          'V',        'V',          'V',          'V',          'V',       'H',        'J',     'J',     'H',      'K']
-    y = (1.0/np.array([0.556, 0.574, 0.819, 0.654, 0.721, 0.749, 1.64, 1.03, 1.24, 1.62, 2.13])) - 1.82
+    wl = np.array([0.556, 0.574, 0.819, 0.654, 0.721, 0.749, 1.64, 1.03, 1.24, 1.62, 2.13])
+    al_av = np.zeros(len(wl))
+    ind1 = np.where(wl < 0.9)  # Optical/NIR
+    ind2 = np.where(wl >= 0.9) # Infrared
+
+    y = (1.0/wl[ind2])
+    a = 0.574*(y**1.61)
+    b = -0.527*(y**1.61)
+    al_av[ind2] = a + (b/3.1)
+
+    y = (1.0/wl[ind1]) - 1.82
     a = 1.0 + 0.17699*y - 0.50447*y**2 - 0.02427*y**3 + 0.72085*y**4 + 0.01979*y**5 - 0.77530*y**6 + 0.32999*y**7
     b = 1.41338*y + 2.28305*y**2 + 1.07233*y**3 - 5.38434*y**4 - 0.62251*y**5 + 5.30260*y**6 - 2.09002*y**7
-    al_av = a + (b/3.1)
+    al_av[ind1] = a + (b/3.1)
 
     ## Read in synthetic magnitudes
     synth = ascii.read('WFIRST_fluxes_BTSettlAGSS2009.txt')
@@ -397,6 +423,7 @@ def main():
 
 
 
+
         ## For STIS curve
         stis_bkg = 10**((26.0-star_vmag)/(-2.5))
 
@@ -405,18 +432,6 @@ def main():
         stis_con_clip =np.clip(stis_con/(10**((3.60-star_vmag)/(-2.5))), stis_bkg, None) 
         stis_int = interp.interp1d(stis_sep, -2.5*np.log10(stis_con_clip), bounds_error=False, fill_value=1.0)
         
-        '''
-        fig, ax = plt.subplots(1, figsize=(3, 3))
-        ax.plot(stis_sep*3600.0, stis_con_noclip, color='gray')
-        ax.plot(stis_sep*3600.0, stis_con_clip, color='red')
-        ax.set_xscale('log')
-        ax.set_yscale('log')
-        ax.set_xlabel('Separation (asec)')
-        ax.set_ylabel('Contrast')
-        fig.savefig('STIScontrast-'+name.replace(' ','_')+'.png', dpi=300, bbox_inches='tight')
-        plt.close('all')
-        '''
-
         sim_type = 'Besancon'
 
         ## Only do non-duplicate entries on the list
@@ -437,8 +452,6 @@ def main():
 
             n_stars = len(mass)
 
-            #mass, vmag = read_trilegal(trilegal_name)
-            #delta_vmag = vmag - star_vmag
             delta_mag = np.copy(synth_mag)
             for i in range(0, len(filters)):
                 if st_filter[i] == 'V':
@@ -461,6 +474,7 @@ def main():
             ## [narrow, wide, ifs660, ifs730, ifs760, STIS, inst1, inst2]
             flag = np.zeros((6+n_inst, 0), dtype=bool) #660
             scattered_flag = np.zeros(4, dtype=np.float64)
+            scattered_flag2 = np.zeros(4, dtype=np.float64)
             scattered_seps = []
 
             n_cpu = mp.cpu_count()
@@ -473,6 +487,7 @@ def main():
                 flag = np.hstack((flag, output[i][0]))
                 scattered_flag += output[i][1]
                 scattered_seps = np.append(scattered_seps, output[i][2])
+                scattered_flag2 += output[i][3]
 
             pool.close()
             pool.join()
@@ -506,6 +521,9 @@ def main():
             for j in range(0, 4):
                 result_string += ', {:.3f}%'.format(scattered_flag[j]/n_sim*100.0)
 
+            for j in range(0, 4):
+                result_string += ', {:.3f}%'.format(scattered_flag2[j]/n_sim*100.0)
+
             if print_header:
                 print result_header
                 f.write(result_header+'\n')
@@ -514,6 +532,7 @@ def main():
             f.write(result_string+'\n')
 
     f.close()
+
     return 0
 
 if __name__ == '__main__':
