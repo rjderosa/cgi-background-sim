@@ -6,11 +6,13 @@ from astropy import units as u
 from astropy import constants
 from scipy import interpolate as interp
 
-def helper(jobs, size, n_stars, current_ra, current_de, spec_orient, wedge_angle, filters, n_inst, inst_filter, inst_bkg, inst_fov_limit, delta_mag, star_vmag, star_jmag, star_hmag, star_kmag):
+def helper(jobs, size, n_stars, current_ra, current_de, spec_orient, wedge_angle, filters, n_inst, inst_name, inst_filter, inst_bkg, inst_fov_limit, delta_mag, star_vmag, star_jmag, star_hmag, star_kmag):
 
     flag = np.zeros((6+n_inst, 0), dtype=bool) #660
     scattered_flag = np.zeros(4, dtype=int) #HLC+Narrow, SLPC+IFS(x3)
     scattered_flag2 = np.zeros(4, dtype=int) #Glint stars also detected by NIRC2 PALMS
+    scattered_flag3 = np.zeros(4, dtype=int) #Glint stars detected with STIS
+    scattered_flag4 = np.zeros(4, dtype=int) #Glint stars detected Palomar
     scattered_seps = []
     np.random.seed(seed=jobs[0])
 
@@ -18,10 +20,9 @@ def helper(jobs, size, n_stars, current_ra, current_de, spec_orient, wedge_angle
         bkg_ra, bkg_de = np.random.uniform(-np.sqrt(size)/2.0, np.sqrt(size)/2.0, n_stars), np.random.uniform(-np.sqrt(size)/2.0, np.sqrt(size)/2.0, n_stars)
         rho = np.sqrt(bkg_ra**2.0 + bkg_de**2.0)
         rho_asec = rho*3600.0
-        current_rho = np.sqrt((bkg_ra - current_ra)**2.0 + (bkg_de - current_de)**2.0)
+        current_rho = np.sqrt((bkg_ra - current_ra)**2.0 + (bkg_de - current_de)**2.0) # degrees
 
-
-        indx200 = np.where(rho_asec < 25.0)[0]
+        indx200 = np.where(rho_asec <= 30.0)[0]
         if len(indx200) > 0:
             j=0
             for mode, limit, wl in zip(('CGI_narrow', 'CGI_IFS660', 'CGI_IFS730', 'CGI_IFS760'), (23.11, 21.0, 21.0, 21.0), (0.574, 0.654, 0.721, 0.749)):
@@ -39,8 +40,8 @@ def helper(jobs, size, n_stars, current_ra, current_de, spec_orient, wedge_angle
                     indx4 = np.where(rho_asec600 >= 4.5)
                     splc_ni4[indx4] = cn[indx4] * 10**(-(rho_asec600[indx4]-4.5)*0.125 - 4.5)
                     
-                    indx15 = np.where(rho_asec[indx200] >= 15) # field stop
-                    splc_ni4[indx15] = 1e-100
+                    indx30 = np.where(rho_asec[indx200] >= 30) # field stop
+                    splc_ni4[indx30] = 1e-100
                     splc_ni_mag = -2.5*np.log10(splc_ni4)
 
                     detected = splc_ni_mag < limit
@@ -49,11 +50,23 @@ def helper(jobs, size, n_stars, current_ra, current_de, spec_orient, wedge_angle
 
                     scattered_flag[j] += np.sum(detected)
                     
-                    # Hardcoded for PALMS H curve
-                    contrast_curve = inst_con[2](current_rho[indx200])
-                    contrast_curve[np.where(current_rho[indx200] > inst_fov_limit[2])] = 0.0
+                    # PALMS H
+                    contrast_curve = inst_con[inst_name.index('NIRC2_PALMS')](current_rho[indx200])
+                    contrast_curve[np.where(current_rho[indx200] > inst_fov_limit[inst_name.index('NIRC2_PALMS')])] = 0.0
                     detected2 = (splc_ni_mag < limit) & (contrast_curve > delta_mag[filters.index('MKO_H')][indx200])
                     scattered_flag2[j] += np.sum(detected2)
+
+                    ## STIS
+                    stis_indx = filters.index('STIS_50CCD')
+                    contrast_curve = stis_int(current_rho[indx200])
+                    detected3 = (splc_ni_mag < limit) & (contrast_curve > delta_mag[stis_indx][indx200])
+                    scattered_flag3[j] += np.sum(detected3)
+
+                    ## Palomar
+                    contrast_curve = inst_con[inst_name.index('Palomar')](current_rho[indx200])
+                    contrast_curve[np.where(current_rho[indx200] > inst_fov_limit[inst_name.index('Palomar')])] = 0.0
+                    detected4 = (splc_ni_mag < limit) & (contrast_curve > delta_mag[filters.index('MKO_Ks')][indx200])
+                    scattered_flag4[j] += np.sum(detected4)
 
                 else:
                     ## HLC
@@ -65,23 +78,34 @@ def helper(jobs, size, n_stars, current_ra, current_de, spec_orient, wedge_angle
                     indx5 = np.where(rho_asec550 >= 5)
                     hlc_ni4[indx5] = cn[indx5] * 10**( -(rho_asec550[indx5]-5)*0.25 - 6)
                     
-                    indx15 = np.where(rho_asec[indx200] >= 15) # field stop
-                    hlc_ni4[indx15] = 1e-100
+                    indx30 = np.where(rho_asec[indx200] >= 30) # field stop
+                    hlc_ni4[indx30] = 1e-100
 
                     hlc_ni_mag = -2.5*np.log10(hlc_ni4)
                 
                     scattered_flag[j] += np.sum(hlc_ni_mag < limit)
 
-                    # Hardcoded for PALMS H curve
-                    contrast_curve = inst_con[2](current_rho[indx200])
-                    contrast_curve[np.where(current_rho[indx200] > inst_fov_limit[2])] = 0.0
+                    # Palms H
+                    contrast_curve = inst_con[inst_name.index('NIRC2_PALMS')](current_rho[indx200])
+                    contrast_curve[np.where(current_rho[indx200] > inst_fov_limit[inst_name.index('NIRC2_PALMS')])] = 0.0
                     detected2 = (hlc_ni_mag < limit) & (contrast_curve > delta_mag[filters.index('MKO_H')][indx200])
                     scattered_flag2[j] += np.sum(detected2)
 
+                    ## STIS
+                    stis_indx = filters.index('STIS_50CCD')
+                    contrast_curve = stis_int(current_rho[indx200])
+                    detected3 = (hlc_ni_mag < limit) & (contrast_curve > delta_mag[stis_indx][indx200])
+                    scattered_flag3[j] += np.sum(detected3)
+
+                    # Palomar
+                    contrast_curve = inst_con[inst_name.index('Palomar')](current_rho[indx200])
+                    contrast_curve[np.where(current_rho[indx200] > inst_fov_limit[inst_name.index('Palomar')])] = 0.0
+                    detected4 = (hlc_ni_mag < limit) & (contrast_curve > delta_mag[filters.index('MKO_Ks')][indx200])
+                    scattered_flag4[j] += np.sum(detected4)
+
                 j+=1
             ## Would any be detected by precursor imaging?
-
-        
+   
         ## How many are within 2 asec
         indx = np.where((rho < (2.0/3600.0)))[0]
         if len(indx) > 0:
@@ -140,8 +164,7 @@ def helper(jobs, size, n_stars, current_ra, current_de, spec_orient, wedge_angle
             ## Now append flags to results array
             flag = np.hstack((flag, np.vstack((narrow_detected, wide_detected, ifs_detected1, ifs_detected2, ifs_detected3, stis_detected, inst_flags))))
 
-    return flag, scattered_flag, scattered_seps, scattered_flag2
-
+    return flag, scattered_flag, scattered_seps, scattered_flag2, scattered_flag3, scattered_flag4
 
 def regrid(data, param):
 
@@ -180,7 +203,7 @@ def regrid(data, param):
 
     return regular_grid, model_axes
 
-def read_besancon(file, synth_logflux, synth_logflux_lowtemp, zp, vm, al_av):
+def read_besancon(file, synth_logflux, synth_logflux_lowtemp, synth_wd_logflux, zp, vm, al_av):
 
     """
     Read besancon simlulation output and returns fundamental star properties
@@ -202,7 +225,7 @@ def read_besancon(file, synth_logflux, synth_logflux_lowtemp, zp, vm, al_av):
     dist = (data['dist']*u.kpc).to(u.m).value
     vmag = data['V']
 
-    return data['Mass'], data['V'], np.transpose(synthetic_mags(logteff, logg, mh, rad, av, dist, vmag, synth_logflux, synth_logflux_lowtemp, zp, vm, al_av))
+    return data['Mass'], data['V'], np.transpose(synthetic_mags(logteff, logg, mh, rad, av, dist, vmag, synth_logflux, synth_logflux_lowtemp, synth_wd_logflux, zp, vm, al_av))
 
 def read_trilegal(file, synth_logflux, synth_logflux_lowtemp, zp, vm, al_av):
 
@@ -229,7 +252,7 @@ def read_trilegal(file, synth_logflux, synth_logflux_lowtemp, zp, vm, al_av):
 
     return data['Mact'].data, data['V'].data, np.transpose(synthetic_mags(logteff, logg, mh, rad, av, dist, vmag, synth_logflux, synth_logflux_lowtemp, zp, vm, al_av))
 
-def synthetic_mags(logteff, logg, mh, rad, av, dist, vmag, synth_logflux, synth_logflux_lowtemp, zp, vm, al_av):
+def synthetic_mags(logteff, logg, mh, rad, av, dist, vmag, synth_logflux, synth_logflux_lowtemp, synth_wd_logflux, zp, vm, al_av):
 
     synth_mag = []
     for i in range(0, len(logteff)):
@@ -247,8 +270,14 @@ def synthetic_mags(logteff, logg, mh, rad, av, dist, vmag, synth_logflux, synth_
                 result = (-2.5*np.log10(result/zp)) + vm # Apparent magnitude
             synth_mag.append(result + (av[i]*al_av))
         else:
-            # Going to use Vmag for white dwarfs
-            synth_mag.append(np.repeat(vmag[i], len(zp)))
+            # This gets the V-X color, so V-(V-X) = X
+            result = vmag[i] - synth_wd_logflux((logteff[i], logg[i]))
+            if np.any(np.isinf(result)) | np.any(np.isnan(result)):
+                # Out of bounds
+                print(10**logteff[i], logg[i], rad[i])
+            ## Correction for differential extinction
+            result -= (av[i] - (av[i]*al_av))
+            synth_mag.append(result)
 
     return synth_mag
 
@@ -265,7 +294,7 @@ def main():
     wfirst_narrow = ascii.read('WFIRST_pred_imaging.txt')
     wfirst_narrow_sep = wfirst_narrow['l/D'].data * ld_narrow
     wfirst_narrow_con = -2.5*np.log10(wfirst_narrow['contr_snr5'].data)
-    wfirst_narrow_int = interp.interp1d(wfirst_narrow_sep, wfirst_narrow_con, bounds_error=False, fill_value=1.0)
+    wfirst_narrow_int = interp.interp1d(wfirst_narrow_sep, wfirst_narrow_con, bounds_error=False, fill_value=-100.0)
 
     ## Load wide contrast curve
     l_wide = 852*u.nm # 10%
@@ -273,7 +302,7 @@ def main():
     wfirst_wide = ascii.read('WFIRST_pred_disk.txt')
     wfirst_wide_sep = wfirst_wide['Rho(as)'].data / 3600.0 # degrees
     wfirst_wide_con = -2.5*np.log10(wfirst_wide['Band4_contr_snr5'].data)
-    wfirst_wide_int = interp.interp1d(wfirst_wide_sep, wfirst_wide_con, bounds_error=False, fill_value=1.0)
+    wfirst_wide_int = interp.interp1d(wfirst_wide_sep, wfirst_wide_con, bounds_error=False, fill_value=-100.0)
 
     ## Load IFS contrast curve
     l_spec = 660*u.nm # 18%
@@ -281,19 +310,19 @@ def main():
     wfirst_spec = ascii.read('WFIRST_pred_spec.txt')
     wfirst_spec_sep = wfirst_spec['l/D'].data * ld_spec
     wfirst_spec_con = -2.5*np.log10(wfirst_spec['contr_snr10'].data/2.0) #convert 10 to 5 sigma
-    wfirst_spec1_int = interp.interp1d(wfirst_spec_sep, wfirst_spec_con, bounds_error=False, fill_value=1.0)
+    wfirst_spec1_int = interp.interp1d(wfirst_spec_sep, wfirst_spec_con, bounds_error=False, fill_value=-100.0)
 
     l_spec = 730*u.nm # 18%
     ld_spec = (((l_spec/d).to(1))*(u.rad).to(u.deg)).value # degrees
     wfirst_spec_sep = wfirst_spec['l/D'].data * ld_spec
     wfirst_spec_con = -2.5*np.log10(wfirst_spec['contr_snr10'].data/2.0) #convert 10 to 5 sigma
-    wfirst_spec2_int = interp.interp1d(wfirst_spec_sep, wfirst_spec_con, bounds_error=False, fill_value=1.0)
+    wfirst_spec2_int = interp.interp1d(wfirst_spec_sep, wfirst_spec_con, bounds_error=False, fill_value=-100.0)
 
     l_spec = 760*u.nm # 18%
     ld_spec = (((l_spec/d).to(1))*(u.rad).to(u.deg)).value # degrees
     wfirst_spec_sep = wfirst_spec['l/D'].data * ld_spec
     wfirst_spec_con = -2.5*np.log10(wfirst_spec['contr_snr10'].data/2.0) #convert 10 to 5 sigma
-    wfirst_spec3_int = interp.interp1d(wfirst_spec_sep, wfirst_spec_con, bounds_error=False, fill_value=1.0)
+    wfirst_spec3_int = interp.interp1d(wfirst_spec_sep, wfirst_spec_con, bounds_error=False, fill_value=-100.0)
     wfirst_spec_int = (wfirst_spec1_int, wfirst_spec2_int, wfirst_spec3_int)
 
     ## Opening angle of bowtie    
@@ -321,7 +350,7 @@ def main():
 
     ## CHARIS
     charis = ascii.read('CHARIS_IFS_H_contrast.txt')
-    charis_con = interp.interp1d(charis['arcsec'].data/3600.0, -2.5*np.log10(charis['5sigHcontr'].data), kind='linear', bounds_error=False, fill_value=1.0)
+    charis_con = interp.interp1d(charis['arcsec'].data/3600.0, -2.5*np.log10(charis['5sigHcontr'].data), kind='linear', bounds_error=False, fill_value=-100.0)
     inst_con.append(charis_con)
     inst_filter.append('MKO_H')
     inst_name.append('CHARIS_IFS')
@@ -330,7 +359,7 @@ def main():
 
     ## CHARIS wide-field (goes out to ~2.5" radius, but Y-band)
     ## Approximate this by extending IFS out to 3"
-    charis_con = interp.interp1d(np.append(charis['arcsec'].data, 2.5)/3600.0,  -2.5*np.log10(np.append(charis['5sigHcontr'].data, charis['5sigHcontr'].data[-1])), kind='linear', bounds_error=False, fill_value=1.0)
+    charis_con = interp.interp1d(np.append(charis['arcsec'].data, 2.5)/3600.0,  -2.5*np.log10(np.append(charis['5sigHcontr'].data, charis['5sigHcontr'].data[-1])), kind='linear', bounds_error=False, fill_value=-100.0)
     inst_con.append(charis_con)
     inst_filter.append('UKIDSS_Y')
     inst_name.append('CHARIS_Wide')
@@ -344,7 +373,7 @@ def main():
     inst_con.append(nirc2_con)
     inst_filter.append('MKO_H')
     inst_name.append('NIRC2_PALMS')
-    inst_bkg_limit.append(23.0)
+    inst_bkg_limit.append(24.0) # Based on preliminary analysis of ups And data (2019-01-09), compared with 1-hr limit in manual of 24.6
     inst_fov_limit.append(10.0/3600.0)
 
     ## NIRC2 (IDPS, Ks)
@@ -357,7 +386,22 @@ def main():
     inst_bkg_limit.append(22.0)
     inst_fov_limit.append(10.0/3600.0)
 
+    irdis = ascii.read('sphere_hd160691.txt')
+    irdis_con = interp.interp1d(irdis['sep'].data/3600.0,  irdis['dmag'].data, kind='linear', bounds_error=False, fill_value=-100.0)
+    inst_con.append(irdis_con)
+    inst_filter.append('MKO_H')
+    inst_name.append('IRDIS_H23')
+    inst_bkg_limit.append(100.0)
+    inst_fov_limit.append(100.0/3600.0)
+
     ## PALOMAR
+    palomar = ascii.read('Palomar_SDC.txt')
+    palomar_con = interp.interp1d(np.append(palomar['sep'].data, 10.0)/3600.0, -2.5*np.log10(10**np.append(palomar['log_5sig_contrast'].data, palomar['log_5sig_contrast'].data[-1])), kind='linear', bounds_error=False, fill_value=-100.0)
+    inst_con.append(palomar_con)
+    inst_filter.append('MKO_Ks')
+    inst_name.append('Palomar')
+    inst_bkg_limit.append(100.0)
+    inst_fov_limit.append(10.0/3600.0)
 
     ## GPI bright star contrast (V~5)??
 
@@ -365,6 +409,7 @@ def main():
 
     ## Define filters and compute extinction from Cardelli et al. 1989
     filters = ['STIS_50CCD', 'CGI_narrow', 'CGI_wide', 'CGI_IFS660', 'CGI_IFS730', 'CGI_IFS760', '2MASS_H', 'UKIDSS_Y', 'MKO_J', 'MKO_H', 'MKO_Ks']
+    wd_filters = [      'V',          'V',        'I',          'R',          'R',          'R',       'H',        'J',     'J',     'H',      'K']
     st_filter = [       'V',          'V',        'V',          'V',          'V',          'V',       'H',        'J',     'J',     'H',      'K']
     wl = np.array([0.556, 0.574, 0.819, 0.654, 0.721, 0.749, 1.64, 1.03, 1.24, 1.62, 2.13])
     al_av = np.zeros(len(wl))
@@ -408,6 +453,16 @@ def main():
     grid, axes = regrid(synth_logflux[ind], (logteff[ind], logg[ind]))
     synth_interp_lowtemp = interp.RegularGridInterpolator(axes, grid, method='linear', bounds_error=False, fill_value=-np.inf)
 
+    ## WD colors, need V-R, V-I, V-J, V-H, V-K
+    data = ascii.read('wd-da_tracks_bergeron.txt')
+    logteff = np.log10(data['Teff'].data)
+    logg = data['logg'].data
+    wd_colors = np.zeros((len(logteff), len(wd_filters)))
+    for i, f in enumerate(wd_filters):
+        wd_colors[:, i] = data['V'].data - data[f].data
+    grid, axes = regrid(wd_colors, (logteff, logg))
+    synth_wd_interp = interp.RegularGridInterpolator(axes, grid, method='linear', bounds_error=False, fill_value=-np.inf)
+
     starlist = ascii.read('starlist.txt')
     n = len(starlist['Name'].data)
 
@@ -435,19 +490,19 @@ def main():
         sim_type = 'Besancon'
 
         ## Only do non-duplicate entries on the list
-        if (dupl == 0):
+        if (dupl == 0) & (name != 'HD 219134 h xxxx'):
 
             ## For each star, run n_sim simulations with both besancon and trilegal
             n_sim = 200000
-
+            
             if sim_type == 'Besancon':
                 besancon_name = 'Besancon/output'+str(besancon)+'.fits.gz'
-                mass, vmag, synth_mag = read_besancon(besancon_name, synth_interp, synth_interp_lowtemp, zp, vm, al_av)
+                mass, vmag, synth_mag = read_besancon(besancon_name, synth_interp, synth_interp_lowtemp, synth_wd_interp, zp, vm, al_av)
                 size = size_b
             elif sim_type == 'TRILEGAL':
                 # TODO: Load Av vs distance from besancon.
                 trilegal_name = 'TRILEGAL/'+str(trilegal)+'.dat.gz'
-                mass, vmag, synth_mag = read_trilegal(trilegal_name, synth_interp, synth_interp_lowtemp, zp, vm, al_av)
+                mass, vmag, synth_mag = read_trilegal(trilegal_name, synth_interp, synth_interp_lowtemp, synth_wd_interp, zp, vm, al_av)
                 size = size_t
 
             n_stars = len(mass)
@@ -465,6 +520,7 @@ def main():
 
             wfirst_ra, wfirst_de = 0.0, 0.0 # Star is at (0, 0) in 2028
             baseline = 8.0 # years between STIS and WFIRST observations
+            #baseline = 2.0 # For HD 219134
             current_ra, current_de = -(star_pmra*baseline), -(star_pmde*baseline) # Location of star in 2019
 
             ## Random orientation for IFS bowtie
@@ -475,12 +531,14 @@ def main():
             flag = np.zeros((6+n_inst, 0), dtype=bool) #660
             scattered_flag = np.zeros(4, dtype=np.float64)
             scattered_flag2 = np.zeros(4, dtype=np.float64)
+            scattered_flag3 = np.zeros(4, dtype=np.float64)
+            scattered_flag4 = np.zeros(4, dtype=np.float64)
             scattered_seps = []
 
             n_cpu = mp.cpu_count()
             pool = mp.Pool(n_cpu)
             jobs = np.array_split(np.arange(n_sim, dtype=int), n_cpu)
-            result = [pool.apply_async(helper, args=(jobs[i], size, n_stars, current_ra, current_de, spec_orient, wedge_angle, filters, n_inst, inst_filter, inst_bkg_limit, inst_fov_limit, delta_mag, star_vmag, star_jmag, star_hmag, star_kmag)) for i in range(0, n_cpu)]
+            result = [pool.apply_async(helper, args=(jobs[i], size, n_stars, current_ra, current_de, spec_orient, wedge_angle, filters, n_inst, inst_name, inst_filter, inst_bkg_limit, inst_fov_limit, delta_mag, star_vmag, star_jmag, star_hmag, star_kmag)) for i in range(0, n_cpu)]
             output = [p.get() for p in result]
             
             for i in range(0, n_cpu):
@@ -488,6 +546,8 @@ def main():
                 scattered_flag += output[i][1]
                 scattered_seps = np.append(scattered_seps, output[i][2])
                 scattered_flag2 += output[i][3]
+                scattered_flag3 += output[i][4]
+                scattered_flag4 += output[i][5]
 
             pool.close()
             pool.join()
@@ -523,6 +583,12 @@ def main():
 
             for j in range(0, 4):
                 result_string += ', {:.3f}%'.format(scattered_flag2[j]/n_sim*100.0)
+
+            for j in range(0, 4):
+                result_string += ', {:.3f}%'.format(scattered_flag3[j]/n_sim*100.0)
+
+            for j in range(0, 4):
+                result_string += ', {:.3f}%'.format(scattered_flag4[j]/n_sim*100.0)
 
             if print_header:
                 print result_header
