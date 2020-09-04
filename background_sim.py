@@ -179,14 +179,14 @@ def regrid(data, param):
     s = [len(i) for i in model_axes]#.append(length[1])
 
     final_coords = np.full((len(s), length[0]), -1, dtype=int)
-    for i in xrange(0, len(model_axes)):
-        for j in xrange(0, len(model_axes[i])):
+    for i in range(0, len(model_axes)):
+        for j in range(0, len(model_axes[i])):
             ind = np.where(param[i] == model_axes[i][j])[0]
             if len(ind) > 0:
                 final_coords[i][ind] = model_coords[i][j]
 
     if np.shape(final_coords)[1] != np.shape(np.unique(final_coords, axis=1))[1]:
-        print 'WARNING: Multiple models for a given coordinate! Using last model in list, but this should be avoided'
+        print('WARNING: Multiple models for a given coordinate! Using last model in list, but this should be avoided')
 
     final_coords = tuple([x for x in final_coords])
     if np.ndim(data) == 1:
@@ -197,7 +197,7 @@ def regrid(data, param):
         s.append(length[1])
         regular_grid = np.full(s, -np.inf, dtype=np.float64)
 
-        for i in xrange(0, length[1]):
+        for i in range(0, length[1]):
             tmp_grid[final_coords] = data[:, i]
             regular_grid[..., i] = tmp_grid
 
@@ -297,7 +297,7 @@ def main():
     wfirst_narrow_int = interp.interp1d(wfirst_narrow_sep, wfirst_narrow_con, bounds_error=False, fill_value=-100.0)
 
     ## Load wide contrast curve
-    l_wide = 852*u.nm # 10%
+    l_wide = 825*u.nm # 10%
     ld_wide = (((l_wide/d).to(1))*(u.rad).to(u.deg)).value # degrees
     wfirst_wide = ascii.read('WFIRST_pred_disk.txt')
     wfirst_wide_sep = wfirst_wide['Rho(as)'].data / 3600.0 # degrees
@@ -336,7 +336,7 @@ def main():
 
     ## Extend STIS contrast curve to 20"
     ## log(con)=-2.8277*log(sep[deg]) - 16.557
-    extension = np.linspace(np.max(stis_sep), 20.0/3600.0, 100.0)
+    extension = np.linspace(np.max(stis_sep), 20.0/3600.0, 100)
     stis_sep = np.append(stis_sep, extension)
     stis_con = np.append(stis_con, 10**((-2.8277*np.log10(extension)) - 16.557))
 
@@ -366,15 +366,21 @@ def main():
     inst_bkg_limit.append(100.0)
     inst_fov_limit.append(100.0/3600.0)
 
-    ## NIRC2 (PALMS)
+    ## NIRC2 (PALMS) - changed to using HD 134 for 2021A proposal
     nirc2 = ascii.read('NIRC2_PALMS.txt')
     #nirc2_con = interp.interp1d(nirc2['arcsec'].data/3600.0, nirc2['dmag'].data, kind='linear', bounds_error=False, fill_value=1.0)
     nirc2_con = lambda rho_deg: 7.1*np.log10(rho_deg*3600.0) + 14.0 # VB's fit to < 1"
+    
+    # UPDATED 2020-09-02
+    nirc2 = ascii.read('NIRC2_HD134.txt')
+    nirc2_con = interp.interp1d(nirc2['arcsec'].data/3600.0, nirc2['dmag'].data, kind='linear', bounds_error=False, fill_value=1.0)
+
     inst_con.append(nirc2_con)
     inst_filter.append('MKO_H')
     inst_name.append('NIRC2_PALMS')
     inst_bkg_limit.append(24.0) # Based on preliminary analysis of ups And data (2019-01-09), compared with 1-hr limit in manual of 24.6
     inst_fov_limit.append(10.0/3600.0)
+
 
     ## NIRC2 (IDPS, Ks)
     nirc2 = ascii.read('NIRC2_IDPS_Ks.txt')
@@ -468,7 +474,7 @@ def main():
 
     ## star proper motion converted from mas/yr to deg/yr
     print_header = True
-    f = open('output.txt', 'w', 0)
+    f = open('output.txt', 'w')
 
     for dupl, name, star_pmra, star_pmde, star_vmag, star_jmag, star_hmag, star_kmag, size_b, size_t, besancon, trilegal in zip(starlist['Dupl?'].data, starlist['Name'].data, \
                                                                             starlist['st_pmra'].data/(3600.0*1e3), starlist['st_pmdec'].data/(3600.0*1e3), \
@@ -490,7 +496,7 @@ def main():
         sim_type = 'Besancon'
 
         ## Only do non-duplicate entries on the list
-        if (dupl == 0) & (name != 'HD 219134 h xxxx'):
+        if (dupl == 0) & (name == 'HD 114613 b'):
 
             ## For each star, run n_sim simulations with both besancon and trilegal
             n_sim = 200000
@@ -520,6 +526,7 @@ def main():
 
             wfirst_ra, wfirst_de = 0.0, 0.0 # Star is at (0, 0) in 2028
             baseline = 8.0 # years between STIS and WFIRST observations
+            baseline = 5.0 # For 2021A observations
             #baseline = 2.0 # For HD 219134
             current_ra, current_de = -(star_pmra*baseline), -(star_pmde*baseline) # Location of star in 2019
 
@@ -591,10 +598,10 @@ def main():
                 result_string += ', {:.3f}%'.format(scattered_flag4[j]/n_sim*100.0)
 
             if print_header:
-                print result_header
+                print(result_header)
                 f.write(result_header+'\n')
                 print_header = False
-            print result_string
+            print(result_string)
             f.write(result_string+'\n')
 
     f.close()
